@@ -80,7 +80,6 @@ class CAClient {
 
     /**
      * Build a proper User object from wallet identity
-     * This is the key method that was broken
      */
     async buildUserFromIdentity(adminIdentity) {
         try {
@@ -165,11 +164,12 @@ class CAClient {
      * Get CA information
      */
     async getCAInfo() {
-        const caClient = await this.getCAClient();
-        if (!this.caInfo) {
-            this.caInfo = await caClient.getCaInfo();
-        }
-        return this.caInfo;
+        await this.getCAClient();
+        // Return basic info without calling getCaInfo() which requires auth
+        return {
+            caName: config.ca.name,
+            caUrl: config.ca.url
+        };
     }
 }
 

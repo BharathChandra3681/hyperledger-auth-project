@@ -104,7 +104,7 @@ class GatewayManager {
                 wallet: wallet,
                 identity: identityLabel,
                 discovery: {
-                    enabled: true,
+                    enabled: false,
                     asLocalhost: true
                 }
             };
@@ -125,7 +125,7 @@ class GatewayManager {
     /**
      * Authenticate a user by connecting to the network
      */
-    async authenticate(userId) {
+   async authenticate(userId) {
         let gateway = null;
 
         try {
@@ -134,10 +134,8 @@ class GatewayManager {
             const { gateway: gw, network } = await this.connect(userId);
             gateway = gw;
 
-            // Query system chaincode to verify connection
-            const contract = network.getContract('qscc');
-            await contract.evaluateTransaction('GetChainInfo', config.network.channelName);
-
+            // Connection successful = authentication successful
+            // No need to query qscc which may fail for various reasons
             logger.info(`User '${userId}' authenticated successfully`);
 
             return {

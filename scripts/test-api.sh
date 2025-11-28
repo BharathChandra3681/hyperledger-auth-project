@@ -49,12 +49,10 @@ RESPONSE=$(curl -s -X POST ${API_URL}/api/users/login \
 echo -e "${BLUE}Response:${NC}"
 echo "$RESPONSE" | jq '.' 2>/dev/null || echo "$RESPONSE"
 
-# Test 5: Query Ledger
-echo -e "\n${BLUE}Test 5: Query Ledger${NC}"
-echo -e "${BLUE}Request: GET /api/ledger/query${NC}"
-echo -e "${BLUE}Header: x-user-id: ${TEST_USER}${NC}"
-RESPONSE=$(curl -s ${API_URL}/api/ledger/query \
-  -H "x-user-id: ${TEST_USER}")
+# Test 5: List All Users
+echo -e "\n${BLUE}Test 5: List All Users${NC}"
+echo -e "${BLUE}Request: GET /api/users${NC}"
+RESPONSE=$(curl -s ${API_URL}/api/users)
 echo -e "${BLUE}Response:${NC}"
 echo "$RESPONSE" | jq '.' 2>/dev/null || echo "$RESPONSE"
 

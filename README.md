@@ -1,129 +1,921 @@
-# Hyperledger Fabric User Registration & Authentication
+# Hyperledger Fabric Authentication Project - Complete Guide
 
-## Overview
+This project implements a complete **user registration and authentication system** for Hyperledger Fabric blockchain networks. It provides both CLI scripts and a REST API to manage user identities, authenticate users, and interact with the blockchain ledger.
 
-This project implements user registration and authentication using Hyperledger Fabric Certificate Authority (CA).
+### Key Features
 
-## Features
+- **User Registration**: Create new blockchain identities with X.509 certificates
+- **Authentication**: Verify users can access the blockchain network
+- **Ledger Operations**: Query and invoke chaincode functions
+- **REST API**: HTTP endpoints for easy integration
+- **Secure Storage**: File-system wallet for cryptographic credentials
 
-- CA Admin enrollment
-- User registration via CA
-- User enrollment (certificate generation)
-- File system wallet for credential storage
-- Network authentication verification
-- REST API for all operations (Bonus)
+---
 
-## Prerequisites
+## Architecture
 
-- Docker & Docker Compose
-- Node.js 18+
-- Hyperledger Fabric 2.5+
+### High-Level Architecture
 
-## Quick Start
-
-### 1. Start Fabric Network
-```bash
-cd ~/hyperledger/fabric-samples/test-network
-./network.sh up -ca
-./network.sh createChannel -c mychannel
-./network.sh deployCC -ccn basic -ccp ../asset-transfer-basic/chaincode-javascript -ccl javascript
+```
+┌─────────────────────────────────────────────────────────────┐
+│                     Client Application                       │
+│            (Web App, Mobile App, CLI, etc.)                  │
+└──────────────────────┬──────────────────────────────────────┘
+                       │ HTTP REST API
+                       ▼
+┌─────────────────────────────────────────────────────────────┐
+│                   Express API Server                         │
+│                    (Port 3000)                               │
+│  ┌──────────────┐  ┌──────────────┐  ┌──────────────┐      │
+│  │  User Mgmt   │  │ Auth Service │  │Ledger Service│      │
+│  │  Endpoints   │  │  Endpoints   │  │  Endpoints   │      │
+│  └──────────────┘  └──────────────┘  └──────────────┘      │
+└──────────────────────┬──────────────────────────────────────┘
+                       │
+        ┌──────────────┼──────────────┐
+        │              │              │
+        ▼              ▼              ▼
+┌─────────────┐ ┌──────────────┐ ┌─────────────┐
+│  CA Client  │ │Wallet Manager│ │   Gateway   │
+│   Utility   │ │   Utility    │ │   Manager   │
+└──────┬──────┘ └──────┬───────┘ └──────┬──────┘
+       │               │                │
+       ▼               ▼                ▼
+┌─────────────────────────────────────────────┐
+│         Hyperledger Fabric Network          │
+│  ┌──────────┐  ┌─────────┐  ┌───────────┐  │
+│  │Certificate│  │  Peer   │  │ Chaincode │  │
+│  │ Authority │  │  Node   │  │ (Smart    │  │
+│  │   (CA)    │  │         │  │ Contract) │  │
+│  └──────────┘  └─────────┘  └───────────┘  │
+└─────────────────────────────────────────────┘
+       │               │
+       ▼               ▼
+┌──────────────┐ ┌──────────────┐
+│File System   │ │  Blockchain  │
+│Wallet        │ │    Ledger    │
+│(Identities)  │ │   (State)    │
+└──────────────┘ └──────────────┘
 ```
 
-### 2. Setup Project
-```bash
-cd ~/hyperledger-auth-project
-npm install
-# Update .env with your FABRIC_NETWORK_PATH
+### Functional Flows
+## 1. Network Setup Flow
+┌─────────────────────────────────────────────────────────────────┐
+│                    ./network.sh up -ca                          │
+└─────────────────────────────────────────────────────────────────┘
+                              │
+                              ▼
+┌─────────────────────────────────────────────────────────────────┐
+│ Starts Docker Containers:                                       │
+│   • ca_org1 (Certificate Authority for Org1)                    │
+│   • ca_org2 (Certificate Authority for Org2)                    │
+│   • peer0.org1.example.com                                      │
+│   • peer0.org2.example.com                                      │
+│   • orderer.example.com                                         │
+└─────────────────────────────────────────────────────────────────┘
+                              │
+                              ▼
+┌─────────────────────────────────────────────────────────────────┐
+│ CA Bootstraps with:                                             │
+│   • Admin credentials (admin/adminpw)                           │
+│   • TLS certificates                                            │
+│   • Root CA certificate                                         │
+└─────────────────────────────────────────────────────────────────┘
+
+
+## 2. Admin Enrollment Flow
+┌─────────────────────────────────────────────────────────────────┐
+│                    node src/enrollAdmin.js                      │
+└─────────────────────────────────────────────────────────────────┘
+                              │
+                              ▼
+┌─────────────────────────────────────────────────────────────────┐
+│ Step 1: Check wallet                                            │
+│         wallet.js → identityExists('admin')                     │
+│         If exists → Skip enrollment                             │
+└─────────────────────────────────────────────────────────────────┘
+                              │
+                              ▼
+┌─────────────────────────────────────────────────────────────────┐
+│ Step 2: Connect to CA                                           │
+│         caClient.js → getCAClient()                             │
+│           └→ Read TLS certificate                               │
+│           └→ Create FabricCAServices client                     │
+│           └→ Connect to https://localhost:7054                  │
+└─────────────────────────────────────────────────────────────────┘
+                              │
+                              ▼
+┌─────────────────────────────────────────────────────────────────┐
+│ Step 3: Enroll with CA                                          │
+│         caClient.js → enroll('admin', 'adminpw')                │
+│           └→ Send enrollment request to CA                      │
+│           └→ CA verifies credentials                            │
+│           └→ CA generates & signs X.509 certificate             │
+│           └→ Returns: { certificate, privateKey }               │
+└─────────────────────────────────────────────────────────────────┘
+                              │
+                              ▼
+┌─────────────────────────────────────────────────────────────────┐
+│ Step 4: Store in Wallet                                         │
+│         wallet.js → putIdentity('admin', x509Identity)          │
+│         Saves to: wallet/admin.id                               │
+│         Contains: { certificate, privateKey, mspId }            │
+└─────────────────────────────────────────────────────────────────┘
+                              │
+                              ▼
+┌─────────────────────────────────────────────────────────────────┐
+│ Result: Admin identity ready                                    │
+│         Can now register new users                              │
+└─────────────────────────────────────────────────────────────────┘
+
+
+## 3. User Registration Flow
+┌─────────────────────────────────────────────────────────────────┐
+│                node src/registerUser.js user1                   │
+└─────────────────────────────────────────────────────────────────┘
+                              │
+                              ▼
+┌─────────────────────────────────────────────────────────────────┐
+│ Step 1: Check if user exists in wallet                          │
+│         wallet.js → identityExists('user1')                     │
+│         If exists → Skip registration                           │
+└─────────────────────────────────────────────────────────────────┘
+                              │
+                              ▼
+┌─────────────────────────────────────────────────────────────────┐
+│ Step 2: Load admin identity                                     │
+│         wallet.js → getIdentity('admin')                        │
+│         Returns admin's { certificate, privateKey, mspId }      │
+└─────────────────────────────────────────────────────────────────┘
+                              │
+                              ▼
+┌─────────────────────────────────────────────────────────────────┐
+│ Step 3: Build admin User object                                 │
+│         caClient.js → buildUserFromIdentity(adminIdentity)      │
+│           └→ Import privateKey into cryptoSuite                 │
+│           └→ Create User object with signing capability         │
+└─────────────────────────────────────────────────────────────────┘
+                              │
+                              ▼
+┌─────────────────────────────────────────────────────────────────┐
+│ Step 4: Register user with CA                                   │
+│         caClient.js → registerUser('user1', adminUser)          │
+│           └→ Admin signs registration request                   │
+│           └→ CA verifies admin's authority                      │
+│           └→ CA creates user entry                              │
+│           └→ Returns: enrollmentSecret (one-time password)      │
+└─────────────────────────────────────────────────────────────────┘
+                              │
+                              ▼
+┌─────────────────────────────────────────────────────────────────┐
+│ Step 5: Enroll user                                             │
+│         caClient.js → enroll('user1', secret)                   │
+│           └→ User authenticates with secret                     │
+│           └→ CA generates X.509 certificate for user            │
+│           └→ Returns: { certificate, privateKey }               │
+└─────────────────────────────────────────────────────────────────┘
+                              │
+                              ▼
+┌─────────────────────────────────────────────────────────────────┐
+│ Step 6: Store in Wallet                                         │
+│         wallet.js → putIdentity('user1', x509Identity)          │
+│         Saves to: wallet/user1.id                               │
+└─────────────────────────────────────────────────────────────────┘
+                              │
+                              ▼
+┌─────────────────────────────────────────────────────────────────┐
+│ Result: User registered & enrolled                              │
+│         Can now authenticate to network                         │
+└─────────────────────────────────────────────────────────────────┘
+
+## 4. Complete System Flow (Big Picture)
+┌─────────────────┐     ┌─────────────────┐     ┌─────────────────┐
+│  Fabric CA      │     │    Wallet       │     │  Fabric Peer    │
+│  (ca_org1)      │     │  (File System)  │     │  (peer0.org1)   │
+└────────┬────────┘     └────────┬────────┘     └────────┬────────┘
+         │                       │                       │
+         │   1. Enroll Admin     │                       │
+         │◄──────────────────────│                       │
+         │   Return: cert + key  │                       │
+         │──────────────────────►│                       │
+         │                       │  Store admin.id       │
+         │                       │──────────┐            │
+         │                       │◄─────────┘            │
+         │                       │                       │
+         │   2. Register User    │                       │
+         │◄──────────────────────│                       │
+         │   (signed by admin)   │                       │
+         │   Return: secret      │                       │
+         │──────────────────────►│                       │
+         │                       │                       │
+         │   3. Enroll User      │                       │
+         │◄──────────────────────│                       │
+         │   Return: cert + key  │                       │
+         │──────────────────────►│                       │
+         │                       │  Store user1.id       │
+         │                       │──────────┐            │
+         │                       │◄─────────┘            │
+         │                       │                       │
+         │                       │   4. Authenticate     │
+         │                       │──────────────────────►│
+         │                       │   (user's cert)       │
+         │                       │                       │
+         │                       │   Verify & Connect    │
+         │                       │◄──────────────────────│
+         │                       │                       │
+
+
+### Component Interaction Flow
+
+1. **Registration Flow**:
+   - Client sends registration request to API
+   - API uses CA Client to register user with Certificate Authority
+   - CA issues X.509 certificate and private key
+   - Wallet Manager stores credentials in file system
+
+2. **Authentication Flow**:
+   - Client sends login request to API
+   - Wallet Manager retrieves user credentials
+   - Gateway Manager establishes mTLS connection to Fabric peer
+   - Successful connection = User authenticated
+
+3. **Ledger Query Flow**:
+   - Client sends query with user ID header
+   - Gateway connects using user's credentials
+   - Contract evaluates transaction (read-only)
+   - Results returned to client
+
+---
+
+
+**Storage Format**:
+Each identity is stored as a JSON file in the `wallet/` directory:
+
+
+### 3. Gateway Manager (`src/utils/gateway.js`)
+
+**Purpose**: Manages connections to the Hyperledger Fabric network
+
+**Key Responsibilities**:
+- Build dynamic connection profiles
+- Establish gateway connections using user credentials
+- Authenticate users by verifying network access
+- Execute ledger queries and transactions
+
+**Main Methods**:
+```javascript
+// Build connection profile
+const connectionProfile = await gatewayManager.buildConnectionProfile()
+
+// Connect to network
+const { gateway, network } = await gatewayManager.connect('user1')
+
+// Authenticate user
+const result = await gatewayManager.authenticate('user1')
+
+// Query ledger (read-only)
+const data = await gatewayManager.queryLedger('user1', 'GetAllAssets', [])
+
+// Submit transaction (state-changing)
+const result = await gatewayManager.submitTransaction('user1', 'CreateAsset', ['id', 'data'])
 ```
 
-### 3. Core Operations
+### 4. Logger (`src/utils/logger.js`)
+
+**Purpose**: Centralized logging using Winston
+
+**Features**:
+- Timestamp formatting (YYYY-MM-DD HH:mm:ss)
+- Log levels: debug, info, warn, error
+- Colored console output
+- Error stack traces
+
+### 5. Configuration (`src/config.js`)
+
+**Purpose**: Centralized configuration management
+
+**Configuration Sections**:
+- Network settings (channel, chaincode)
+- Organization details (MSP ID, org name)
+- CA settings (host, port, admin credentials)
+- Application settings (port, environment, logging)
+
+---
+
+## How Authentication Works
+
+### Understanding X.509 Certificates
+
+In Hyperledger Fabric, authentication is based on **X.509 digital certificates** rather than usernames and passwords. Here's how it works:
+
+1. **Certificate Authority (CA)**: Acts like a trusted passport office
+2. **Certificate**: Like a digital passport that proves your identity
+3. **Private Key**: Secret key that only you have (proves the certificate belongs to you)
+4. **Public Key**: Included in certificate (others use it to verify your signatures)
+
+### Authentication Process Step-by-Step
+
+#### Step 1: Admin Enrollment
+
+Before any users can register, an admin must enroll:
+
 ```bash
-# Enroll admin
 node src/enrollAdmin.js
+```
 
-# Register user
+**What happens**:
+1. Script connects to CA at `localhost:7054`
+2. Enrolls using hardcoded credentials (`admin:adminpw`)
+3. CA issues X.509 certificate and private key for admin
+4. Credentials stored in `wallet/admin.id`
+
+**Result**: Admin can now register users
+
+#### Step 2: User Registration
+
+Register a new user:
+
+```bash
 node src/registerUser.js user1
+```
 
-# Authenticate
+**What happens**:
+1. Script loads admin identity from wallet
+2. Admin authenticates with CA
+3. Admin registers new user `user1` with CA
+4. CA returns enrollment secret (one-time password)
+5. Script enrolls `user1` using the secret
+6. CA issues X.509 certificate and private key for `user1`
+7. Credentials stored in `wallet/user1.id`
+
+**Result**: User1 can now authenticate and access the network
+
+#### Step 3: Authentication
+
+Verify user can access the network:
+
+```bash
 node src/authenticate.js user1
 ```
 
-### 4. API Server (Bonus)
+**What happens**:
+1. Script loads `user1` identity from wallet
+2. Creates connection profile with network details
+3. Initiates gateway connection to Fabric peer
+4. **mTLS Handshake**:
+   - Peer requests client certificate
+   - User presents X.509 certificate
+   - User proves ownership by signing with private key
+   - Peer validates certificate against CA
+   - Peer checks MSP ID (Org1MSP)
+5. If valid, connection established
+6. Script queries ledger with `GetAllAssets`
+7. Successful query = Full authentication verified
+
+**Result**: User1 is authenticated and authorized
+
+### Visual Authentication Flow
+┌─────────────────────────────────────────────────────────────────┐
+│                    node src/authenticate.js user7               │
+└─────────────────────────────────────────────────────────────────┘
+                              │
+                              ▼
+┌─────────────────────────────────────────────────────────────────┐
+│ Step 1: Check if user exists in wallet                          │
+│         wallet.js → identityExists('user7')                     │
+└─────────────────────────────────────────────────────────────────┘
+                              │
+                              ▼
+┌─────────────────────────────────────────────────────────────────┐
+│ Step 2: Load credentials from wallet                            │
+│         wallet.js → getIdentity('user7')                        │
+│         Returns: { certificate, privateKey, mspId }             │
+└─────────────────────────────────────────────────────────────────┘
+                              │
+                              ▼
+┌─────────────────────────────────────────────────────────────────┐
+│ Step 3: Connect to Fabric Network                               │
+│         gateway.js → authenticate('user7')                      │
+│           └→ Build connection profile (TLS certs)               │
+│           └→ Create Gateway                                     │
+│           └→ Connect using user's certificate                   │
+│           └→ Access channel 'mychannel'                         │
+└─────────────────────────────────────────────────────────────────┘
+                              │
+                              ▼
+┌─────────────────────────────────────────────────────────────────┐
+│ Result: Connection successful = User Authenticated              │
+│         (Peer validated the certificate)                        │
+└─────────────────────────────────────────────────────────────────┘
+---
+
+## Project Structure
+
+```
+hyperledger-auth-project/
+│
+├── src/                           # Source code
+│   ├── app.js                    # Express REST API server (main entry)
+│   ├── config.js                 # Configuration management
+│   ├── enrollAdmin.js            # CLI: Enroll CA admin
+│   ├── registerUser.js           # CLI: Register new user
+│   ├── authenticate.js           # CLI: Test authentication
+│   │
+│   └── utils/                    # Utility modules
+│       ├── caClient.js           # Certificate Authority operations
+│       ├── wallet.js             # Identity storage management
+│       ├── gateway.js            # Network gateway management
+│       └── logger.js             # Winston logging utility
+│
+├── wallet/                        # File system wallet (gitignored)
+│   ├── admin.id                  # Admin identity
+│   ├── user5.id                  # User identities
+│   ├── user7.id
+│   └── ...
+│
+├── scripts/
+│   └── test-api.sh               # API testing script
+│
+├── .env                          # Environment configuration
+├── package.json                  # Dependencies
+├── README.md                     # Original documentation
+└── AUTHENTICATION_IMPLEMENTATION_REPORT.md  # Implementation report
+```
+
+---
+
+## Setup Instructions
+
+### Prerequisites
+
+1. **Docker & Docker Compose** - For Hyperledger Fabric network
+2. **Node.js 18+** - JavaScript runtime
+3. **Hyperledger Fabric 2.5+** - Blockchain framework
+4. **fabric-samples** - Example networks and chaincode
+
+### Step 1: Install Hyperledger Fabric
+
+```bash
+# Create directory
+mkdir -p ~/hyperledger
+cd ~/hyperledger
+
+# Download fabric-samples
+curl -sSL https://bit.ly/2ysbOFE | bash -s
+
+# This installs:
+# - fabric-samples/ directory
+# - Hyperledger Fabric binaries
+# - Docker images
+```
+
+### Step 2: Start Fabric Test Network
+
+```bash
+cd ~/hyperledger/fabric-samples/test-network
+
+# Start network with Certificate Authority
+./network.sh up -ca
+
+# Create channel
+./network.sh createChannel -c mychannel
+
+# Deploy basic chaincode
+./network.sh deployCC -ccn basic -ccp ../asset-transfer-basic/chaincode-javascript -ccl javascript
+```
+
+**Verify network is running**:
+```bash
+docker ps
+# Should see containers: peer0.org1, orderer, ca_org1, etc.
+```
+
+### Step 3: Clone and Setup This Project
+
+```bash
+# Clone or navigate to project
+cd ~/hyperledger-auth-project
+
+# Install dependencies
+npm install
+```
+
+### Step 4: Configure Environment
+
+Edit `.env` file with your paths:
+
+```bash
+# Fabric network path (update this to your actual path)
+FABRIC_NETWORK_PATH=/Users/youruser/hyperledger/fabric-samples/test-network
+
+# Network configuration
+CHANNEL_NAME=mychannel
+CHAINCODE_NAME=basic
+
+# Organization
+MSP_ID=Org1MSP
+ORG_NAME=org1.example.com
+
+# Certificate Authority
+CA_NAME=ca-org1
+CA_HOST=localhost
+CA_PORT=7054
+CA_ADMIN_ID=admin
+CA_ADMIN_SECRET=adminpw
+
+# Application
+WALLET_PATH=./wallet
+PORT=3000
+NODE_ENV=development
+LOG_LEVEL=debug
+```
+
+### Step 5: Enroll Admin
+
+```bash
+npm run enroll-admin
+# or
+node src/enrollAdmin.js
+```
+
+**Expected output**:
+```
+Successfully enrolled admin user and imported it into the wallet
+Admin Identity Details:
+- MSP ID: Org1MSP
+- Identity Type: X.509
+- Wallet Path: ./wallet
+
+Next step: Register a user using 'node src/registerUser.js <username>'
+```
+
+### Step 6: Register Test User
+
+```bash
+npm run register-user user1
+# or
+node src/registerUser.js user1
+```
+
+**Expected output**:
+```
+Successfully registered and enrolled user 'user1'
+User Identity Details:
+- User ID: user1
+- MSP ID: Org1MSP
+- Identity Type: X.509
+- Wallet Path: ./wallet
+
+Next step: Authenticate using 'node src/authenticate.js user1'
+```
+
+### Step 7: Test Authentication
+
+```bash
+npm run authenticate user1
+# or
+node src/authenticate.js user1
+```
+
+**Expected output**:
+```
+User 'user1' authenticated successfully!
+Authentication Details:
+- User ID: user1
+- MSP ID: Org1MSP
+- Channel: mychannel
+- Assets on Ledger: [...]
+```
+
+### Step 8: Start API Server
+
+```bash
+npm run dev
+# or
+npm start  # for production
+```
+
+**Server should start**:
+```
+Server is running on port 3000
+Environment: development
+```
+
+---
+
+## Usage Guide
+
+### CLI Scripts
+
+#### 1. Enroll Admin
+
+```bash
+node src/enrollAdmin.js
+```
+
+Enrolls the Certificate Authority administrator. **Required before registering users.**
+
+#### 2. Register User
+
+```bash
+node src/registerUser.js <username>
+
+# Examples:
+node src/registerUser.js alice
+node src/registerUser.js bob
+node src/registerUser.js user123
+```
+
+Registers a new user and enrolls them with the CA.
+
+#### 3. Authenticate User
+
+```bash
+node src/authenticate.js <username>
+
+# Examples:
+node src/authenticate.js alice
+node src/authenticate.js bob
+```
+
+Tests if user can authenticate to the network and query the ledger.
+
+### API Usage
+
+Start the server first:
 ```bash
 npm run dev
 ```
 
-## API Endpoints
+#### Health Check
 
-| Endpoint | Method | Description |
-|----------|--------|-------------|
-| /api/health | GET | Health check |
-| /api/admin/enroll | POST | Enroll CA admin |
-| /api/users/register | POST | Register user |
-| /api/users | GET | List users |
-| /api/users/:id | GET | Get user info |
-| /api/users/login | POST | Authenticate |
-| /api/ledger/query | GET | Query ledger |
-
-## Project Structure
-```
-├── src/
-│   ├── config.js          # Configuration
-│   ├── enrollAdmin.js     # Admin enrollment
-│   ├── registerUser.js    # User registration
-│   ├── authenticate.js    # Authentication test
-│   ├── app.js             # REST API
-│   └── utils/
-│       ├── logger.js      # Logging
-│       ├── wallet.js      # Wallet management
-│       ├── caClient.js    # CA operations
-│       └── gateway.js     # Network gateway
-├── wallet/                # Credentials storage
-├── scripts/               # Shell scripts
-└── screenshots/           # Evidence
+```bash
+curl http://localhost:3000/api/health
 ```
 
-## Screenshots
-
-1. Network containers running
-2. Admin enrollment success
-3. User registration success
-4. Authentication success
-5. API responses
-
-## Author
-
-Your Name
-
-## License
-
-MIT
+**Response**:
+```json
+{
+  "status": "healthy",
+  "timestamp": "2024-01-15T10:30:00.000Z",
+  "ca": {
+    "name": "ca-org1",
+    "url": "https://localhost:7054"
+  },
+  "network": {
+    "channel": "mychannel",
+    "mspId": "Org1MSP"
+  }
+}
 ```
 
-Save and exit.
+#### Enroll Admin
+
+```bash
+curl -X POST http://localhost:3000/api/admin/enroll \
+  -H "Content-Type: application/json"
+```
+
+**Response**:
+```json
+{
+  "success": true,
+  "message": "Admin enrolled successfully",
+  "mspId": "Org1MSP"
+}
+```
+
+#### Register User
+
+```bash
+curl -X POST http://localhost:3000/api/users/register \
+  -H "Content-Type: application/json" \
+  -d '{"userId": "alice"}'
+```
+
+**Response**:
+```json
+{
+  "success": true,
+  "message": "User registered and enrolled successfully",
+  "userId": "alice",
+  "mspId": "Org1MSP"
+}
+```
+
+#### Login (Authenticate)
+
+```bash
+curl -X POST http://localhost:3000/api/users/login \
+  -H "Content-Type: application/json" \
+  -d '{"userId": "alice"}'
+```
+
+**Response**:
+```json
+{
+  "success": true,
+  "message": "Authentication successful",
+  "userId": "alice",
+  "mspId": "Org1MSP",
+  "channel": "mychannel",
+  "timestamp": "2024-01-15T10:35:00.000Z"
+}
+```
+
+#### List All Users
+
+```bash
+curl http://localhost:3000/api/users
+```
+
+**Response**:
+```json
+{
+  "success": true,
+  "users": ["admin", "alice", "bob", "user5"],
+  "count": 4
+}
+```
+
+#### Get User Details
+
+```bash
+curl http://localhost:3000/api/users/alice
+```
+
+**Response**:
+```json
+{
+  "success": true,
+  "user": {
+    "label": "alice",
+    "mspId": "Org1MSP",
+    "type": "X.509",
+    "exists": true
+  }
+}
+```
+
+#### Query Ledger
+
+```bash
+curl http://localhost:3000/api/ledger/query?function=GetAllAssets \
+  -H "x-user-id: alice"
+```
+
+**Response**:
+```json
+{
+  "success": true,
+  "function": "GetAllAssets",
+  "data": [
+    {
+      "ID": "asset1",
+      "Color": "blue",
+      "Size": 5,
+      "Owner": "Tomoko",
+      "AppraisedValue": 300
+    }
+  ]
+}
+```
+
+#### Invoke Transaction
+
+```bash
+curl -X POST http://localhost:3000/api/ledger/invoke \
+  -H "Content-Type: application/json" \
+  -H "x-user-id: alice" \
+  -d '{
+    "function": "CreateAsset",
+    "args": ["asset7", "green", "10", "Alice", "500"]
+  }'
+```
+
+**Response**:
+```json
+{
+  "success": true,
+  "message": "Transaction submitted successfully",
+  "function": "CreateAsset",
+  "result": "asset7 created"
+}
+```
 
 ---
 
-# ✅ Final Checklist
+## API Reference
 
-## Files Created:
+### Base URL
 ```
-hyperledger-auth-project/
-├── package.json              ✓
-├── .env                      ✓
-├── .gitignore                ✓
-├── README.md                 ✓
-├── src/
-│   ├── config.js             ✓
-│   ├── enrollAdmin.js        ✓
-│   ├── registerUser.js       ✓
-│   ├── authenticate.js       ✓
-│   ├── app.js                ✓
-│   └── utils/
-│       ├── logger.js         ✓
-│       ├── wallet.js         ✓
-│       ├── caClient.js       ✓
-│       └── gateway.js        ✓
-├── scripts/
-│   └── test-api.sh           ✓
-├── wallet/                   (created at runtime)
+http://localhost:3000/api
+```
+
+### Authentication
+Most endpoints require a user ID:
+- **Header**: `x-user-id: <username>`
+
+### Endpoints
+
+| Method | Endpoint | Description | Auth Required |
+|--------|----------|-------------|---------------|
+| GET | `/health` | Health check | No |
+| POST | `/admin/enroll` | Enroll CA admin | No |
+| POST | `/users/register` | Register new user | No (requires admin enrolled) |
+| POST | `/users/login` | Authenticate user | No |
+| GET | `/users` | List all users | No |
+| GET | `/users/:userId` | Get user details | No |
+| GET | `/ledger/query` | Query chaincode | Yes (x-user-id) |
+| POST | `/ledger/invoke` | Invoke transaction | Yes (x-user-id) |
+
+### Error Responses
+
+All errors follow this format:
+
+```json
+{
+  "success": false,
+  "error": "Error message describing what went wrong"
+}
+```
+
+### Transaction Flow
+
+**Query (Read-Only)**:
+```
+User → Gateway → Peer → Chaincode → World State → Return Results
+```
+- No endorsement required
+- No ledger update
+- Fast and efficient
+
+**Invoke (State-Changing)**:
+```
+User → Gateway → Peer(s) → Chaincode → Endorsement
+  → Orderer → Consensus → Commit to Ledger → Notify User
+```
+- Requires endorsement
+- Updates world state
+- Creates new block
+- Slower but secure
+
+---
+
+## Security
+
+
+### Future Security Enhancements
+
+1. **Hardware Security Module (HSM)**: Store private keys in hardware
+2. **Encrypted Wallet**: Encrypt wallet files at rest
+3. **JWT Tokens**: Session management for API
+4. **Rate Limiting**: Prevent abuse of API endpoints
+5. **Role-Based Access Control (RBAC)**: Fine-grained permissions
+6. **Audit Logging**: Immutable audit trail on blockchain
+
+---
+### Network Reset
+
+If things are broken, reset everything:
+
+```bash
+# 1. Stop and clean Fabric network
+cd ~/hyperledger/fabric-samples/test-network
+./network.sh down
+docker system prune -f
+
+# 2. Remove wallet
+cd ~/hyperledger-auth-project
+rm -rf wallet/
+
+# 3. Restart network
+cd ~/hyperledger/fabric-samples/test-network
+./network.sh up -ca
+./network.sh createChannel -c mychannel
+./network.sh deployCC -ccn basic -ccp ../asset-transfer-basic/chaincode-javascript -ccl javascript
+
+# 4. Re-enroll admin
+cd ~/hyperledger-auth-project
+node src/enrollAdmin.js
+```
+
+---
+### Test Script
+```bash
+# Run automated API tests
+bash scripts/test-api.sh
+```
+---
+
+## Summary
+
+This project provides a **production-ready authentication system** for Hyperledger Fabric that:
+
+1. Uses **X.509 certificates** for cryptographic identity
+2. Integrates with **Fabric CA** for user management
+3. Provides **CLI scripts** for easy testing
+4. Offers a **REST API** for application integration
+5. Implements **security best practices**
+6. Includes **comprehensive logging** and error handling
+

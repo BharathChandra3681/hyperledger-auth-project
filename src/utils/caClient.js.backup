@@ -1,0 +1,210 @@
+'use strict';
+
+const FabricCAServices = require('fabric-ca-client');
+const fs = require('fs');
+const config = require('../config');
+const logger = require('./logger');
+
+/**
+ * Certificate Authority Client Utility
+ * Handles all interactions with the Fabric CA
+ */
+class CAClient {
+    constructor() {
+        this.caClient = null;
+        this.caInfo = null;
+    }
+
+    /**
+     * Build and return the CA client instance
+     */
+    async getCAClient() {
+        if (this.caClient) {
+            return this.caClient;
+        }
+
+        try {
+            // Get the CA TLS certificate
+            const cryptoPaths = config.getCryptoPaths();
+            const caTlsCertPath = cryptoPaths.caTlsCert;
+
+            if (!fs.existsSync(caTlsCertPath)) {
+                throw new Error(`CA TLS certificate not found at: ${caTlsCertPath}`);
+            }
+
+            const caTlsCert = fs.readFileSync(caTlsCertPath, 'utf8');
+
+            // Create CA client with proper TLS configuration
+            const tlsOptions = {
+                trustedRoots: [caTlsCert],
+                verify: false,
+                httpOptions: {
+                    verify: false
+                }
+            };
+
+            this.caClient = new FabricCAServices(
+                config.ca.url,
+                tlsOptions,
+                config.ca.name
+            );
+
+            logger.info(`CA client created for: ${config.ca.name}`);
+
+            return this.caClient;
+        } catch (error) {
+            logger.error(`Failed to create CA client: ${error.message}`);
+            throw error;
+        }
+    }
+
+    /**
+     * Enroll an identity with the CA
+     */
+    async enroll(enrollmentId, enrollmentSecret) {
+        try {
+            const caClient = await this.getCAClient();
+
+            logger.info(`Enrolling identity: ${enrollmentId}`);
+
+            const enrollment = await caClient.enroll({
+                enrollmentID: enrollmentId,
+                enrollmentSecret: enrollmentSecret
+            });
+
+            logger.info(`Successfully enrolled identity: ${enrollmentId}`);
+
+            return {
+                certificate: enrollment.certificate,
+                privateKey: enrollment.key.toBytes()
+            };
+        } catch (error) {
+            logger.error(`Failed to enroll ${enrollmentId}: ${error.message}`);
+            throw error;
+        }
+    }
+
+    /**
+     * Register a new user with the CA using admin credentials
+     */
+    async registerUser(userId, adminIdentity, options = {}) {
+        try {
+            const caClient = await this.getCAClient();
+            const crypto = require('crypto');
+            const Base64 = require('js-base64').Base64;
+
+            logger.info(`Registering new user: ${userId}`);
+
+            // Normalize the private key
+            let privateKeyPEM = adminIdentity.credentials.privateKey;
+            if (typeof privateKeyPEM !== 'string') {
+                privateKeyPEM = privateKeyPEM.toString('utf8');
+            }
+            privateKeyPEM = privateKeyPEM.replace(/\r\n/g, '\n');
+
+            // Create a proper signing callback for fabric-ca-client
+            const buildRegisterRequest = (registrar) => {
+                return new Promise((resolve, reject) => {
+                    const request = {
+                        enrollmentID: userId,
+                        enrollmentSecret: undefined,
+                        affiliation: options.affiliation || config.org.department,
+                        attr: options.attrs || [],
+                        role: options.role || 'client'
+                    };
+
+                    // Sign the request
+                    try {
+                        const requestStr = JSON.stringify(request);
+                        const sign = crypto.createSign('RSA-SHA256');
+                        sign.update(requestStr);
+                        const signature = sign.sign(privateKeyPEM);
+                        
+                        request.signature = Base64.fromUint8Array(signature);
+                        request.signingIdentity = adminIdentity.credentials.certificate;
+                        
+                        resolve(request);
+                    } catch (error) {
+                        reject(error);
+                    }
+                });
+            };
+
+            // Try direct CA client register with proper context
+            const { User } = require('fabric-common');
+            const user = new User('admin');
+            
+            // Set up the user with minimal requirements
+            user._name = 'admin';
+            user._mspId = adminIdentity.mspId;
+            user._certificate = adminIdentity.credentials.certificate;
+            
+            // Add a method for getting the signing identity that fabric-ca-client can work with
+            user.getSigningIdentity = () => {
+                const SigningIdentity = class {
+                    constructor(cert, key) {
+                        this.cert = cert;
+                        this.key = key;
+                    }
+
+                    sign(msg) {
+                        const sign = crypto.createSign('RSA-SHA256');
+                        sign.update(msg);
+                        return sign.sign(this.key);
+                    }
+
+                    getPublicKey() {
+                        return this.cert;
+                    }
+
+                    getMSPId() {
+                        return adminIdentity.mspId;
+                    }
+                };
+
+                return new SigningIdentity(adminIdentity.credentials.certificate, privateKeyPEM);
+            };
+
+            logger.debug('Admin user setup complete, attempting registration');
+
+            // Register the user
+            const secret = await caClient.register(
+                {
+                    affiliation: options.affiliation || config.org.department,
+                    enrollmentID: userId,
+                    role: options.role || 'client',
+                    attrs: options.attrs || []
+                },
+                user
+            );
+
+            logger.info(`Successfully registered user: ${userId}`);
+
+            return secret;
+        } catch (error) {
+            logger.error(`Failed to register user ${userId}: ${error.message}`);
+            logger.error(`Stack: ${error.stack}`);
+            throw error;
+        }
+    }
+
+    /**
+     * Register and enroll a new user in one step
+     */
+    async registerAndEnroll(userId, adminIdentity, options = {}) {
+        const secret = await this.registerUser(userId, adminIdentity, options);
+        const enrollment = await this.enroll(userId, secret);
+        return enrollment;
+    }
+
+    /**
+     * Get CA information
+     */
+    async getCAInfo() {
+        await this.getCAClient();
+        return this.caInfo;
+    }
+}
+
+// Export singleton instance
+module.exports = new CAClient();

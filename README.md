@@ -714,10 +714,85 @@ node src/enrollAdmin.js
 
 ---
 ### Test Script
+
+Run the automated API test suite:
+
 ```bash
-# Run automated API tests
 bash scripts/test-api.sh
 ```
+
+**Sample Test Results:**
+
+```
+==========================================
+  API Test Suite                         
+==========================================
+
+Test 1: Health Check
+Request: GET /api/health
+Response:
+{
+  "status": "healthy",
+  "timestamp": "2025-11-29T07:57:52.086Z",
+  "fabric": {
+    "ca": "ca-org1",
+    "channel": "mychannel",
+    "mspId": "Org1MSP"
+  }
+}
+
+Test 2: Enroll Admin
+Request: POST /api/admin/enroll
+Response:
+{
+  "success": true,
+  "message": "Admin already enrolled"
+}
+
+Test 3: Register User (testuser_1764403071)
+Request: POST /api/users/register
+Payload: {"userId": "testuser_1764403071"}
+Response:
+{
+  "success": true,
+  "message": "User registered successfully",
+  "userId": "testuser_1764403071",
+  "mspId": "Org1MSP"
+}
+
+Test 4: Login
+Request: POST /api/users/login
+Payload: {"userId": "testuser_1764403071"}
+Response:
+{
+  "success": true,
+  "message": "Authentication successful",
+  "userId": "testuser_1764403071",
+  "mspId": "Org1MSP",
+  "channel": "mychannel",
+  "timestamp": "2025-11-29T07:57:52.689Z"
+}
+
+Test 5: List All Users
+Request: GET /api/users
+Response:
+{
+  "success": true,
+  "count": 7,
+  "users": [
+    "admin",
+    "testuser_1764361952",
+    "testuser_1764364692",
+    "testuser_1764403071",
+    "user5",
+    "user7",
+    "user9"
+  ]
+}
+
+Tests Complete!
+```
+
 ---
 
 ## Summary
